@@ -1,0 +1,10 @@
+add_library (FDet		FDet.cc)
+add_library (CLM		CLM.cc)
+add_library (FCheck		FCheck.cc)
+add_library (IO			IO.cc)
+add_library (Patch		Patch.cc)
+add_library (PAW		PAW.cc)
+add_library (PDM		PDM.cc)
+add_library (Tracker	Tracker.cc)
+
+set (FACETRACKER_LIBS "CLM FCheck FDet IO Patch PAW PDM Tracker")
