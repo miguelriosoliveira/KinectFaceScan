@@ -1,51 +1,11 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+#include "Scan3D.h"
+
 class Util
 {
 public:
-
-	/* find point in box operations */
-
-	static int internBoxCenterPoint (cv::Rect insideBox, cv::Rect outsideBox) {
-		return calculatePositionInsideBox(insideBox, outsideBox, insideBox.height/2, insideBox.width/2);
-	}
-
-	static int internBoxHighestCenterPoint (cv::Rect insideBox, cv::Rect outsideBox) {
-		return calculatePositionInsideBox(insideBox, outsideBox, insideBox.height, insideBox.width/2);
-	}
-
-	static int internBoxLeftCenterPoint (cv::Rect insideBox, cv::Rect outsideBox) {
-		return calculatePositionInsideBox(insideBox, outsideBox, insideBox.height/2, 0);
-	}
-
-	static int internBoxRightCenterPoint (cv::Rect insideBox, cv::Rect outsideBox) {
-		return calculatePositionInsideBox(insideBox, outsideBox, insideBox.height/2, insideBox.width);
-	}
-
-	static int calculatePositionInsideBox(cv::Rect insideBox, cv::Rect outsideBox, int height, int width) {
-		return (insideBox.y + height)*outsideBox.width + insideBox.x + width;
-	}
-
-	static void leftCenterPoint(cv::Rect box, float& x_out, float& y_out) {
-		x_out = box.x;
-		y_out = box.y + box.height/2;
-	}
-
-	static void rightCenterPoint(cv::Rect box, float& x_out, float& y_out) {
-		x_out = box.x + box.width;
-		y_out = box.y + box.height/2;
-	}
-
-	static void centerPoint(cv::Rect box, float& x_out, float& y_out) {
-		x_out = box.x + box.width/2;
-		y_out = box.y + box.height/2;
-	}
-
-	static void downCenterPoint(cv::Rect box, float& x_out, float& y_out) {
-		x_out = box.x + box.width/2;
-		y_out = box.y;
-	}
 
 	/* string operations */
 
@@ -92,7 +52,9 @@ public:
 	}
 
 	static string removeFileExtension(string fileName) {
-		vector<string> temp = split(fileName, ".");
+		// vector<string> temp = split(fileName, ".");
+		Tokenizer tok(fileName, '.');
+		vector<string> temp = tok.remaining();
 
 		string nameWithoutExtension;
 		for (int i = 0; i < temp.size()-1; ++i)
@@ -108,11 +70,20 @@ public:
 	}
 
 	static string changeSuffix(string filePath, string suffix) {
-		vector<string> path = Util::split(filePath, "/");
+		// vector<string> path = Util::split(filePath, "/");
+		Tokenizer tok(filePath, '/');
+		vector<string> path = tok.remaining();
+
 		string fileNameRaw = Util::removeFileExtension(path.back());
 		string newFileName = Util::addSuffix(fileNameRaw, suffix);
-		vector<string> previousPath(path.begin(), path.end() - 1);
-		return join(previousPath, "/") + "/" + newFileName;
+
+		if (path.size() > 1)
+		{
+			vector<string> previousPath(path.begin(), path.end() - 1);
+			return join(previousPath, "/") + "/" + newFileName;
+		}
+
+		return newFileName;
 	}
 
 	/* other */
@@ -126,7 +97,7 @@ public:
 
 		// Visit http://en.cppreference.com/w/cpp/chrono/c/strftime
 		// for more information about date/time format
-		strftime(buf, sizeof(buf), "%Y-%m-%d.%T", &tstruct);
+		strftime(buf, sizeof(buf), "%Y-%m-%d_%T", &tstruct);
 
 		return buf;
 	}
@@ -147,7 +118,7 @@ public:
 
 			// ostringstream ss;
 			// ss << i;
-			// putText(image, ss.str(), p1, cv::FONT_HERSHEY_TRIPLEX, .3, cv::Scalar(0, 0, 255));
+			// putText(image, ss.str(), p1, cv::FONT_HERSHEY_SIMPLEX, .3, cv::Scalar(0, 0, 255));
 		}
 	}
 
@@ -163,8 +134,9 @@ public:
 
 	// cria vector inicializado com valores vindos de um array
 	static vector<int> initVector(int array[]) {
-		int arrayLenght = sizeof(array) / sizeof(array[0]);
-		return vector<int>(array, array + arrayLenght);
+		int arrLength = sizeof(array) / sizeof(array[0]);
+		vector<int> result(array, array + arrLength);
+		return result;
 	}
 
 	static cv::Point findMinimumXY(std::vector<cv::Point> points) {

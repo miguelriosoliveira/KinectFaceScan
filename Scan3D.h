@@ -1,15 +1,19 @@
 #ifndef SCAN_3D_H
 #define SCAN_3D_H
 
+#include <pcl/registration/registration.h>
 #include <pcl/registration/transformation_estimation_svd.h>	// TransformationEstimationSVD
 #include <pcl/registration/icp.h>							// IterativeClosestPoint
 #include <pcl/registration/gicp.h>
 #include <pcl/filters/filter.h>								// removeNaNFromPointCloud
 #include <pcl/filters/extract_indices.h>					// eifilter
+#include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/segmentation/extract_polygonal_prism_data.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/point_types.h>
 
-#include "EyeLandmarks.h"
-#include "NoseLandmarks.h"
+#include "Landmarks.h"
 #include "CloudOp.h"
 #include "CloudIO.h"
 #include "Util.h"
@@ -20,11 +24,13 @@ typedef pcl::PointCloud<PointType> CloudType;
 class Scan3D
 {
 public:
-	
+
 	CloudType::Ptr cloud;
 	vector<pcl::Vertices> faces;
-	EyeLandmarks eyeLandmarks;
-	NoseLandmarks noseLandmarks;
+	pcl::TextureMesh texMesh;
+	// EyeLandmarks eyeLandmarks;
+	// NoseLandmarks noseLandmarks;
+	Landmarks landmarks;
 
 	/*======================= Constructors =======================*/
 
@@ -36,23 +42,31 @@ public:
 		this->cloud = cloud;
 	}
 
-	Scan3D(CloudType::Ptr cloud, EyeLandmarks eyeLandmarks, NoseLandmarks noseLandmarks) {
+	Scan3D(CloudType::Ptr cloud, Landmarks landmarks) {
 		this->cloud = cloud;
-		this->eyeLandmarks = eyeLandmarks;
-		this->noseLandmarks = noseLandmarks;
+		// this->eyeLandmarks = eyeLandmarks;
+		// this->noseLandmarks = noseLandmarks;
+		this->landmarks = landmarks;
 	}
 
 	Scan3D(string cloudFileName, string landmarksFileName = "") {
 		this->cloud = CloudType::Ptr(new CloudType);
-		if (landmarksFileName != "")
-			load(cloudFileName, landmarksFileName);
+
+		if (landmarksFileName == "")
+		{
+			landmarksFileName = Util::changeSuffix(cloudFileName, "_landmarks.txt");
+		}
+
+		load(cloudFileName, landmarksFileName);
 	}
 
 	/*=================== Cloud main operations ===================*/
 
 	float zDistanceEyeToNose() {
-		PointType eyePoint = cloud->at(eyeLandmarks.leftEye_right);
-		PointType nosePoint = cloud->at(noseLandmarks.noseTip);
+		// PointType eyePoint = cloud->at(eyeLandmarks.leftEye_right);
+		// PointType nosePoint = cloud->at(noseLandmarks.noseTip);
+		PointType eyePoint = cloud->at(landmarks.leftEye_right);
+		PointType nosePoint = cloud->at(landmarks.noseTip);
 		return fabs(eyePoint.z - nosePoint.z);
 	}
 
@@ -62,7 +76,8 @@ public:
 
 		// seleciona todos os pontos que estejam mto longe
 		vector<int> facePointIndices;
-		PointType eyePoint = cloud->at(eyeLandmarks.leftEye_left);
+		// PointType eyePoint = cloud->at(eyeLandmarks.leftEye_left);
+		PointType eyePoint = cloud->at(landmarks.leftEye_left);
 		for (int i = 0; i < cloud->size(); ++i)
 		{
 			// critério para saber se ponto está longe:
@@ -78,15 +93,15 @@ public:
 
 	void removePointsOutsidePolygon(vector<cv::Point> polygonPoints) {
 		/* criar poligono e adicionar pontos a ele */
-		
+
 		CloudType polygon;
 		for (int i = 0; i < polygonPoints.size(); ++i)
 		{
-			cv::Point cvp = polygonPoints[i];			
+			cv::Point cvp = polygonPoints[i];
 			PointType p = this->cloud->at(cvp.x, cvp.y);
 			polygon.push_back(p);
 		}
-		
+
 		/* guardar indices dos pontos que estejam dentro do poligono */
 
 		vector<int> faceIndices;
@@ -104,6 +119,11 @@ public:
 	}
 
 	void getPointsInsidePolygon(vector<cv::Point> cvFacePoints) {
+		if (not cvFacePoints.size()) {
+			this->cloud->clear();
+			return;
+		}
+
 		int menorX = 9999, menorY = 9999;
 		int maiorX = -9999, maiorY = -9999;
 		for (int i = 0; i < cvFacePoints.size(); ++i)
@@ -122,7 +142,7 @@ public:
 		faceCloud->width = abs(maiorY - menorY);
 		faceCloud->is_dense = false;
 		faceCloud->points.resize(faceCloud->height * faceCloud->width);
-		
+
 		std::vector<int> facePointIndices;
 		for (int i = 0; i < cvFacePoints.size(); ++i)
 		{
@@ -229,7 +249,7 @@ public:
 	void addPoint(PointType p) {
 		this->cloud->push_back(p);
 	}
-	
+
 	/*==================== Landmark detection ====================*/
 
 	// retorna indice da ponta do nariz
@@ -260,6 +280,7 @@ public:
 			return CloudOp::isNosePoint(point); // blue
 	}
 
+	/*
 	void findLandmarks(vector<cv::Rect> eyes) {
 		if (eyes.size() != 2)
 			return;
@@ -270,27 +291,19 @@ public:
 
 		Util::leftCenterPoint(leftEye, x, y);
 		eyeLandmarks.leftEye_left = findPoint(x, y);
-		// PointType &leftEye_leftPoint = cloud->at(eyeLandmarks.leftEye_left);
-		// paintPoint(leftEye_leftPoint, "red");
 
 		Util::rightCenterPoint(leftEye, x, y);
 		eyeLandmarks.leftEye_right = findPoint(x, y);
-		// PointType &leftEye_rightPoint = cloud->at(eyeLandmarks.leftEye_right);
-		// paintPoint(leftEye_rightPoint, "red");
 
 		Util::leftCenterPoint(rightEye, x, y);
 		eyeLandmarks.rightEye_left = findPoint(x, y);
-		// PointType &rightEye_leftPoint = cloud->at(eyeLandmarks.rightEye_left);
-		// paintPoint(rightEye_leftPoint, "red");
 
 		Util::rightCenterPoint(rightEye, x, y);
 		eyeLandmarks.rightEye_right = findPoint(x, y);
-		// PointType &rightEye_rightPoint = cloud->at(eyeLandmarks.rightEye_right);
-		// paintPoint(rightEye_rightPoint, "red");
 	}
 
 	void findLandmarks(cv::Rect nose) {
-		/* find noseTip */
+		// find noseTip 
 		float menorZ = 9999;
 
 		for (int y = nose.y; y < nose.y+nose.height; y++)
@@ -309,7 +322,7 @@ public:
 		PointType &nosePoint = cloud->at(noseLandmarks.noseTip);
 		// paintPoint(nosePoint, "green");
 
-		/* find noseBase */
+		// find noseBase 
 		float menorDifX = 9999;
 		float e = 0.01;
 
@@ -333,7 +346,7 @@ public:
 		PointType &noseBasePoint = cloud->at(noseLandmarks.noseBase);
 		// paintPoint(noseBasePoint, "green");
 
-		/* find nose_left */
+		// find nose_left 
 		float menorDifY = 9999;
 		for (int y = nose.y+nose.height/4; y < nose.y+3*nose.height/4; y++)
 		{
@@ -357,7 +370,7 @@ public:
 		// PointType &noseLeftPoint = cloud->at(noseLandmarks.nose_left);
 		// paintPoint(noseLeftPoint, "green");
 
-		/* find nose_right */
+		// find nose_right 
 		menorDifY = 9999;
 		for (int y = nose.y+nose.height/4; y < nose.y+3*nose.height/4; y++)
 		{
@@ -386,6 +399,7 @@ public:
 		findLandmarks(eyes);
 		findLandmarks(nose);
 	}
+	*/
 
 	// verifica se os pontos de interesse das duas nuvens batem
 	bool gotRightLandmarks(vector<int> indices_src, vector<int> indices_tgt) {
@@ -400,26 +414,34 @@ public:
 	}
 
 	vector<int> getLandmarkIndices() {
-		vector<int> eyeIndices = eyeLandmarks.allIndices();
-		vector<int> noseIndices = noseLandmarks.allIndices();
-		vector<int> indices;
+		// vector<int> eyeIndices = this->eyeLandmarks.allIndices();
+		// vector<int> noseIndices = this->noseLandmarks.allIndices();
+		// vector<int> indices;
 
-		indices.insert(indices.begin(), eyeIndices.begin(), eyeIndices.end());
-		indices.insert(indices.begin() + eyeIndices.size(), noseIndices.begin(), noseIndices.end());
+		// indices.insert(indices.begin(), eyeIndices.begin(), eyeIndices.end());
+		// indices.insert(indices.begin() + eyeIndices.size(), noseIndices.begin(), noseIndices.end());
 
-		return indices;
+		// return indices;
+
+		return this->landmarks.allIndices();
 	}
 
 	void updateLandmarks(vector<int> landmarkIndices) {
-		if (landmarkIndices.size() == 8)
+		// if (landmarkIndices.size() == 8)
+		if (landmarkIndices.size() == 13)
 		{
-			eyeLandmarks = EyeLandmarks(landmarkIndices[0], landmarkIndices[1], landmarkIndices[2], landmarkIndices[3]);
-			noseLandmarks = NoseLandmarks(landmarkIndices[4], landmarkIndices[5], landmarkIndices[6], landmarkIndices[7]);
+			// eyeLandmarks = EyeLandmarks(landmarkIndices[0], landmarkIndices[1], landmarkIndices[2], landmarkIndices[3]);
+			// noseLandmarks = NoseLandmarks(landmarkIndices[4], landmarkIndices[5], landmarkIndices[6], landmarkIndices[7]);
+			this->landmarks = Landmarks(landmarkIndices[0], landmarkIndices[1], landmarkIndices[2], landmarkIndices[3],
+				landmarkIndices[4], landmarkIndices[5], landmarkIndices[6], landmarkIndices[7],
+				landmarkIndices[8], landmarkIndices[9], landmarkIndices[10], landmarkIndices[11],
+				landmarkIndices[12]);
 		}
 	}
 
 	void updateLandmarks(vector<cv::Point> landmarks, cv::Rect face) {
-		if (landmarks.size() != 8) return;
+		// if (landmarks.size() != 8) return;
+		if (landmarks.size() != 13) return;
 
 		// for (int i = 0; i < landmarks.size(); ++i)
 		// {
@@ -430,15 +452,27 @@ public:
 		// }
 
 		cv::Point p;
-		p = landmarks[0]; eyeLandmarks.leftEye_left		= findPoint(p.x, p.y);
-		p = landmarks[1]; eyeLandmarks.leftEye_right	= findPoint(p.x, p.y);
-		p = landmarks[2]; eyeLandmarks.rightEye_left	= findPoint(p.x, p.y);
-		p = landmarks[3]; eyeLandmarks.rightEye_right	= findPoint(p.x, p.y);
+		std::vector<int> indices;
+		// p = landmarks[0]; indices.push_back(findPoint(p.x, p.y)); //eyeLandmarks.leftEye_left		= findPoint(p.x, p.y);
+		// p = landmarks[1]; indices.push_back(findPoint(p.x, p.y)); //eyeLandmarks.leftEye_right	= findPoint(p.x, p.y);
+		// p = landmarks[2]; indices.push_back(findPoint(p.x, p.y)); //eyeLandmarks.rightEye_left	= findPoint(p.x, p.y);
+		// p = landmarks[3]; indices.push_back(findPoint(p.x, p.y)); //eyeLandmarks.rightEye_right	= findPoint(p.x, p.y);
 
-		p = landmarks[4]; noseLandmarks.noseTip		= findPoint(p.x, p.y);
-		p = landmarks[5]; noseLandmarks.nose_left	= findPoint(p.x, p.y);
-		p = landmarks[6]; noseLandmarks.noseBase	= findPoint(p.x, p.y);
-		p = landmarks[7]; noseLandmarks.nose_right	= findPoint(p.x, p.y);
+		// p = landmarks[4]; indices.push_back(findPoint(p.x, p.y)); //noseLandmarks.noseTip		= findPoint(p.x, p.y);
+		// p = landmarks[5]; indices.push_back(findPoint(p.x, p.y)); //noseLandmarks.nose_left	= findPoint(p.x, p.y);
+		// p = landmarks[6]; indices.push_back(findPoint(p.x, p.y)); //noseLandmarks.noseBase	= findPoint(p.x, p.y);
+		// p = landmarks[7]; indices.push_back(findPoint(p.x, p.y)); //noseLandmarks.nose_right	= findPoint(p.x, p.y);
+
+		// p = landmarks[8]; indices.push_back(findPoint(p.x, p.y));
+		// p = landmarks[9]; indices.push_back(findPoint(p.x, p.y));
+
+		for (int i = 0; i < landmarks.size(); ++i)
+		{
+			p = landmarks[i];
+			indices.push_back(findPoint(p.x, p.y));
+		}
+
+		updateLandmarks(indices);
 	}
 
 	/*============================ IO ============================*/
@@ -448,17 +482,31 @@ public:
 		loadLandmarksFromTXT(landmarksFileName);
 	}
 
-	void save(string cloudFileName = "point_cloud.off", string landmarksFileName = "point_cloud_landmarks.txt") {
-		CloudIO::saveCloudToOFF(this->cloud, cloudFileName);
-		saveLandmarksToTXT(landmarksFileName);
+	void save(string cloudFileName = "point_cloud.off", string landmarksFileName = "") {
+		if (landmarksFileName == "")
+			landmarksFileName = Util::changeSuffix(cloudFileName, "_landmarks.txt");
+
+		string fileExtension = Util::getFileExtension(cloudFileName);
+
+		if (fileExtension == "off")
+		{
+			CloudIO::saveCloudToOFF(this->cloud, this->faces, cloudFileName);
+			saveLandmarksToTXT(landmarksFileName);
+		}
+		else if (fileExtension == "obj")
+		{
+			CloudIO::saveCloudToOBJ(this->texMesh, cloudFileName);
+			CloudIO::fixFaces(cloudFileName);
+		}
 	}
 
 	void saveLandmarksToTXT(string fileName = "point_cloud_landmarks.txt") {
 		ofstream file(fileName.c_str());
 
-		vector<int> landmarkIndices = this->eyeLandmarks.allIndices();
-		vector<int> noseIndices = this->noseLandmarks.allIndices();
-		landmarkIndices.insert(landmarkIndices.end(), noseIndices.begin(), noseIndices.end());
+		// vector<int> landmarkIndices = this->eyeLandmarks.allIndices();
+		// vector<int> noseIndices = this->noseLandmarks.allIndices();
+		// landmarkIndices.insert(landmarkIndices.end(), noseIndices.begin(), noseIndices.end());
+		vector<int> landmarkIndices = this->landmarks.allIndices();
 
 		for (int i = 0; i < landmarkIndices.size(); ++i)
 		{
@@ -473,10 +521,10 @@ public:
 
 	void loadLandmarksFromTXT(string fileName) {
 		ifstream file(fileName.c_str());
-		vector<PointType> points(8);
+		vector<PointType> points(13);
 		vector<int> landmarkIndices;
 
-		for (int i = 0; i < 8; ++i)
+		for (int i = 0; i < 13; ++i)
 		{
 			file >> points[i].x >> points[i].y >> points[i].z;
 		}
@@ -491,8 +539,12 @@ public:
 
 		if (landmarkIndices.size() == points.size())
 		{
-			this->eyeLandmarks = EyeLandmarks(landmarkIndices[0], landmarkIndices[1], landmarkIndices[2], landmarkIndices[3]);
-			this->noseLandmarks = NoseLandmarks(landmarkIndices[4], landmarkIndices[5], landmarkIndices[6], landmarkIndices[7]);
+			// this->eyeLandmarks = EyeLandmarks(landmarkIndices[0], landmarkIndices[1], landmarkIndices[2], landmarkIndices[3]);
+			// this->noseLandmarks = NoseLandmarks(landmarkIndices[4], landmarkIndices[5], landmarkIndices[6], landmarkIndices[7]);
+			this->landmarks = Landmarks(landmarkIndices[0], landmarkIndices[1], landmarkIndices[2], landmarkIndices[3],
+				landmarkIndices[4], landmarkIndices[5], landmarkIndices[6], landmarkIndices[7],
+				landmarkIndices[8], landmarkIndices[9], landmarkIndices[10], landmarkIndices[11],
+				landmarkIndices[12]);
 		} else {
 			cerr << "--(!) ERROR: Landmarks read from file don't match points in the cloud!" << endl;
 		}
@@ -503,16 +555,33 @@ public:
 
 		if (fileExtension == "pcd")
 		{
-			cloud = CloudIO::loadCloudFromPCD(cloudFileName);
+			this->cloud = CloudIO::loadCloudFromPCD(cloudFileName);
 		}
 		else if (fileExtension == "off")
 		{
-			cloud = CloudIO::loadCloudFromOFF(cloudFileName);
-			faces = CloudIO::loadFacesFromOFF(cloudFileName);
+			this->cloud = CloudIO::loadCloudFromOFF(cloudFileName);
+			this->faces = CloudIO::loadFacesFromOFF(cloudFileName);
+			// pcl::toPCLPointCloud2(*(this->cloud), this->texMesh.cloud);
+			// this->texMesh.tex_polygons.push_back(this->faces);
+		}
+		else if (fileExtension == "obj")
+		{
+			this->texMesh = CloudIO::loadCloudFromOBJ(cloudFileName);
+			pcl::fromPCLPointCloud2(this->texMesh.cloud, *(this->cloud));
+			this->faces = this->texMesh.tex_polygons[0];
 		}
 		else {
-			cerr << "--(!) ERROR: File extension must be \".pcd\" or \".off\"!" << endl;
+			cerr << "--(!) ERROR: File extension must be \".pcd\", \".off\" or \".obj\"!" << endl;
 			return;
+		}
+	}
+
+	static void massSaving(vector<Scan3D> scans, string fileName = "scan") {
+		for (int i = 0; i < scans.size(); ++i)
+		{
+			std::ostringstream index;
+			index << i+1;
+			scans[i].save(fileName+index.str()+".off", fileName+index.str()+"_land.txt");
 		}
 	}
 
@@ -551,50 +620,145 @@ public:
 		point.b = b;
 	}
 
-	// marca o ponto de interesse do olho de vermelho 
+	// marca o ponto de interesse do olho de vermelho
 	void markEyePoint(PointType &eyePoint) {
 		paintPoint(eyePoint, "red");
 	}
 
-	// marca o ponto de interesse do nariz de verde 
+	// marca o ponto de interesse do nariz de verde
 	void markNosePoint(PointType &nosePoint) {
 		paintPoint(nosePoint, "green");
 	}
 
+	// marca o ponto de interesse da boca de amarelo
+	void markMouthPoint(PointType &mouthPoint) {
+		paintPoint(mouthPoint, "yellow");
+	}
+
+	// marca o ponto de interesse da boca de ciano
+	void markChinPoint(PointType &chinPoint) {
+		paintPoint(chinPoint, "cyan");
+	}
+
 	void markEyePoints() {
-		markEyePoint(cloud->at(eyeLandmarks.leftEye_left));
-		markEyePoint(cloud->at(eyeLandmarks.leftEye_right));
-		markEyePoint(cloud->at(eyeLandmarks.rightEye_left));
-		markEyePoint(cloud->at(eyeLandmarks.rightEye_right));
+		markEyePoint(cloud->at(landmarks.leftEye_left));
+		markEyePoint(cloud->at(landmarks.leftEye_right));
+		markEyePoint(cloud->at(landmarks.rightEye_left));
+		markEyePoint(cloud->at(landmarks.rightEye_right));
 	}
 
 	void markNosePoints() {
-		markNosePoint(cloud->at(noseLandmarks.noseTip));
-		markNosePoint(cloud->at(noseLandmarks.nose_left));
-		markNosePoint(cloud->at(noseLandmarks.noseBase));
-		markNosePoint(cloud->at(noseLandmarks.nose_right));
+		markNosePoint(cloud->at(landmarks.noseTip));
+		markNosePoint(cloud->at(landmarks.nose_left));
+		markNosePoint(cloud->at(landmarks.noseBase));
+		markNosePoint(cloud->at(landmarks.nose_right));
+	}
+
+	void markMouthPoints() {
+		markMouthPoint(cloud->at(landmarks.mouth_up));
+		markMouthPoint(cloud->at(landmarks.mouth_left));
+		markMouthPoint(cloud->at(landmarks.mouth_right));
+		markMouthPoint(cloud->at(landmarks.mouth_down));
+	}
+
+	void markChinPoints() {
+		markChinPoint(cloud->at(landmarks.chin));
 	}
 
 	// marca pontos de interesse na nuvem (olhos e nariz)
 	void markFaceLandmarks() {
 		markEyePoints();
 		markNosePoints();
+		markMouthPoints();
+		markChinPoints();
 	}
 
 	// "aplica textura" copiando as cores dos pontos de uma nuvem próxima
-	void applyTextureFromCloud(Scan3D scan) {
+	void applyTextureFromCloud(Scan3D cloud, int k = 1) {
+		pcl::KdTree<PointType>::Ptr tree (new pcl::KdTreeFLANN<PointType>);
+		tree->setInputCloud(cloud.cloud);
+
 		for (int i = 0; i < this->cloud->size(); ++i)
 		{
-			// encontra ponto mais proximo da nuvem
 			PointType& p = this->cloud->at(i);
-			int closestPtIndex = scan.findClosestPoint(p.x, p.y, p.z);
-			PointType closestPt = scan.cloud->at(closestPtIndex);
+
+			std::vector<int> nn_indices (k);
+			std::vector<float> nn_dists (k);
+			tree->nearestKSearch(p, k, nn_indices, nn_dists);
+
+			// int closestPtIndex = cloud.findClosestPoint(p.x, p.y, p.z);
+			PointType closestPt = cloud.cloud->at(nn_indices[0]);
 
 			// copia RGB do ponto
 			p.r = closestPt.r;
 			p.g = closestPt.g;
 			p.b = closestPt.b;
 		}
+	}
+
+	void applyTextureFromImage(Scan3D fullCloud, string blankImgFileName, string pathToSave) {
+		CloudOp::fillBlankImage(this->cloud, fullCloud.cloud, blankImgFileName, pathToSave);
+	}
+
+	// PointType getLeftEyeLeftPoint() {
+	// 	return this->cloud->at(this->eyeLandmarks.leftEye_left);
+	// }
+
+	// PointType getLeftEyeRightPoint() {
+	// 	return this->cloud->at(this->eyeLandmarks.leftEye_right);
+	// }
+
+	// PointType getRightEyeLeftPoint() {
+	// 	return this->cloud->at(this->eyeLandmarks.rightEye_left);
+	// }
+
+	// PointType getRightEyeRightPoint() {
+	// 	return this->cloud->at(this->eyeLandmarks.rightEye_right);
+	// }
+
+	// PointType getNoseLeftPoint() {
+	// 	return this->cloud->at(this->noseLandmarks.nose_left);
+	// }
+
+	// PointType getNoseTipPoint() {
+	// 	return this->cloud->at(this->noseLandmarks.noseTip);
+	// }
+
+	// PointType getNoseRightPoint() {
+	// 	return this->cloud->at(this->noseLandmarks.nose_right);
+	// }
+
+	// PointType getNoseBasePoint() {
+	// 	return this->cloud->at(this->noseLandmarks.noseBase);
+	// }
+
+	std::vector<PointType> landmarkPoints() {
+		std::vector<PointType> landmarkPoints;
+		PointType p;
+
+		// p = this->cloud->at(this->landmarks.leftEye_left);		landmarkPoints.push_back(p);
+		// p = this->cloud->at(this->landmarks.leftEye_right);		landmarkPoints.push_back(p);
+		// p = this->cloud->at(this->landmarks.rightEye_left);		landmarkPoints.push_back(p);
+		// p = this->cloud->at(this->landmarks.rightEye_right);	landmarkPoints.push_back(p);
+
+		// p = this->cloud->at(this->landmarks.nose_left);			landmarkPoints.push_back(p);
+		// p = this->cloud->at(this->landmarks.noseTip);			landmarkPoints.push_back(p);
+		// p = this->cloud->at(this->landmarks.nose_right);		landmarkPoints.push_back(p);
+		// p = this->cloud->at(this->landmarks.noseBase);			landmarkPoints.push_back(p);
+
+		// p = this->cloud->at(this->landmarks.mouth_left);		landmarkPoints.push_back(p);
+		// p = this->cloud->at(this->landmarks.mouth_right);		landmarkPoints.push_back(p);
+
+		// p = this->cloud->at(this->landmarks.chin);				landmarkPoints.push_back(p);
+
+		std::vector<int> allIndices = this->landmarks.allIndices();
+		for (int i = 0; i < allIndices.size(); ++i)
+		{
+			p = this->cloud->at(allIndices[i]);
+			landmarkPoints.push_back(p);
+		}
+
+		return landmarkPoints;
 	}
 
 	/*==================== Cloud registration ====================*/
@@ -634,20 +798,20 @@ public:
 		icp.setInputSource(thisCloud);
 		icp.setInputTarget(targetCloud);
 
-		/*
+
 		// boa calibração de parâmetros by Thiago Oliveira dos Santos
 		icp.setMaximumIterations(5000);
 		icp.setTransformationEpsilon(0.00000001);
 		icp.setEuclideanFitnessEpsilon(0.00000001);
-		icp.setRANSACIteration(5000);
-		icp.setRANSACOutlierRejectionThreshold(1);
-		*/
+		icp.setRANSACIterations(5000);
+		//icp.setRANSACOutlierRejectionThreshold(1);
+
 
 		// faz o alinhamento
 		icp.align(*(thisCloud));
 
 		// modifica a nuvem
-		Eigen::Matrix4f transformationMatrix = icp.getFinalTransformation(); 
+		Eigen::Matrix4f transformationMatrix = icp.getFinalTransformation();
 		pcl::transformPointCloud(*(this->cloud), *(this->cloud), transformationMatrix);
 	}
 
@@ -655,13 +819,27 @@ public:
 	void GICPRegistration(Scan3D scan_tgt) {
 		//remove NAN points from the cloud (CUIDADO: FAZ COM QUE A NUVEM FIQUE DESORGANIZADA!!!)
 		std::vector<int> v;
-		pcl::removeNaNFromPointCloud(*(this->cloud),	*(this->cloud),		v);
-		pcl::removeNaNFromPointCloud(*(scan_tgt.cloud),	*(scan_tgt.cloud),	v);
+		CloudType::Ptr thisCloud(new CloudType);
+		CloudType::Ptr targetCloud(new CloudType);
+		pcl::removeNaNFromPointCloud(*(this->cloud),	*(thisCloud),		v);
+		pcl::removeNaNFromPointCloud(*(scan_tgt.cloud),	*(targetCloud),	v);
 
 		pcl::GeneralizedIterativeClosestPoint<PointType, PointType> gicp;
-		gicp.setInputSource(this->cloud);
-		gicp.setInputTarget(scan_tgt.cloud);
-		gicp.align(*(this->cloud));
+		gicp.setInputSource(thisCloud);
+		gicp.setInputTarget(targetCloud);
+
+		// boa calibração de parâmetros by Thiago Oliveira dos Santos
+		// gicp.setMaximumIterations(5000);
+		// gicp.setTransformationEpsilon(0.00000001);
+		// gicp.setEuclideanFitnessEpsilon(0.00000001);
+		// gicp.setRANSACIterations(5000);
+		//gicp.setRANSACOutlierRejectionThreshold(1);
+
+		gicp.align(*(thisCloud));
+
+		// modifica a nuvem
+		Eigen::Matrix4f transformationMatrix = gicp.getFinalTransformation(); 
+		pcl::transformPointCloud(*(this->cloud), *(this->cloud), transformationMatrix);
 	}
 
 	void rigidICPRegistration(Scan3D scan_tgt) {
@@ -679,7 +857,8 @@ public:
 	/*=========================== Other ===========================*/
 
 	Scan3D clone() {
-		return Scan3D(CloudOp::copyCloud(this->cloud), this->eyeLandmarks, this->noseLandmarks);
+		// return Scan3D(CloudOp::copyCloud(this->cloud), this->eyeLandmarks, this->noseLandmarks);
+		return Scan3D(CloudOp::copyCloud(this->cloud), this->landmarks);
 	}
 
 	void print() {
@@ -687,99 +866,152 @@ public:
 		cout << "\tcloud size: " << cloud->size() << endl;
 
 		cout << "\teyeLandmarks: " << endl;
-		cout << "\t\tleftEye_left: " << eyeLandmarks.leftEye_left << endl;
-		cout << "\t\tleftEye_right: " << eyeLandmarks.leftEye_right << endl;
-		cout << "\t\trightEye_left: " << eyeLandmarks.rightEye_left << endl;
-		cout << "\t\trightEye_right: " << eyeLandmarks.rightEye_right << endl;
+		cout << "\t\tleftEye_left: " << landmarks.leftEye_left << endl;
+		cout << "\t\tleftEye_right: " << landmarks.leftEye_right << endl;
+		cout << "\t\trightEye_left: " << landmarks.rightEye_left << endl;
+		cout << "\t\trightEye_right: " << landmarks.rightEye_right << endl;
 
 		cout << "\tnoseLandmarks: " << endl;
-		cout << "\t\tnoseTip: " << noseLandmarks.noseTip << endl;
-		cout << "\t\tnoseBase: " << noseLandmarks.noseBase << endl;
-		cout << "\t\tnose_left: " << noseLandmarks.nose_left << endl;
-		cout << "\t\tnose_right: " << noseLandmarks.nose_right << endl;
+		cout << "\t\tnoseTip: " << landmarks.noseTip << endl;
+		cout << "\t\tnose_left: " << landmarks.nose_left << endl;
+		cout << "\t\tnose_right: " << landmarks.nose_right << endl;
+		cout << "\t\tnoseBase: " << landmarks.noseBase << endl;
+
+		cout << "\tmouthLandmarks: " << endl;
+		cout << "\t\tmouth_up: " << landmarks.mouth_up << endl;
+		cout << "\t\tmouth_left: " << landmarks.mouth_left << endl;
+		cout << "\t\tmouth_right: " << landmarks.mouth_right << endl;
+		cout << "\t\tmouth_down: " << landmarks.mouth_down << endl;
+
+		cout << "\tchinLandmarks: " << endl;
+		cout << "\t\tchin: " << landmarks.chin << endl;
 	}
 
-	/*
-	void bkp_function_nose_markup() {
-		float menorZ = -9999;
-		int nosetipIndex;
-		for (int i = 0; i < faceCloud.cloud->size(); ++i)
-		{
-			PointType &p = faceCloud.cloud->at(i);
-			if (CloudOp::isNosePoint(p)) //azul
-			{
-				p.r = 0;
-				p.g = 0;
-				p.b = 0;
-			}
+	void printTexMesh() {
+		// cout << this->texMesh.cloud << endl;
+		// cout << "Header: " << this->texMesh.header << endl;
 
-			if (p.z > menorZ)
-			{
-				menorZ = p.z;
-				nosetipIndex = i;
-			}
+		cout << "Tex Polygons (Fs): ";
+		if (this->texMesh.tex_polygons.size())
+		{
+			cout << this->texMesh.tex_polygons[0].size() << endl;
+			cout << this->texMesh.tex_polygons[0][0] << "..." << endl;
+		} else {
+			cout << this->texMesh.tex_polygons.size() << endl;
 		}
 
-		PointType &nosePoint = faceCloud.cloud->at(nosetipIndex);
-		nosePoint.r = 255;
-		nosePoint.g = 255;
-		nosePoint.b = 0;
+		cout << endl;
 
-		float e = 0.001;
-		for (int i = nosetipIndex; i < faceCloud.cloud->size(); ++i)
+		cout << "Tex Coordinates (VTs): ";
+		if (this->texMesh.tex_coordinates.size())
 		{
-			PointType &p = faceCloud.cloud->at(i);
-			if (nosePoint.x - e < p.x and p.x < nosePoint.x + e)
-			{
-				if (p.z < nosePoint.z - e*10)
-				{
-					p.r = 255;
-					p.g = 255;
-					p.b = 0;
-					break;
-				}
-			}
+			cout << this->texMesh.tex_coordinates[0].size() << endl;
+			cout << this->texMesh.tex_coordinates[0][0] << endl;
+			cout << "..." << endl;
+		} else {
+			cout << this->texMesh.tex_coordinates.size() << endl;
 		}
 
-		e = 0.005;
-		float menorX = 9999, maiorX = -9999;
-		int noseLeftIndex, noseRightIndex;
-		for (int i = nosetipIndex - faceCloud.cloud->width; i < faceCloud.cloud->size(); ++i)
+		cout << endl;
+
+		cout << "Tex Materials (dados do arquivo MTL): " << this->texMesh.tex_materials.size() << endl;
+		if (this->texMesh.tex_materials.size())
 		{
-			PointType &p = faceCloud.cloud->at(i);
-			if (nosePoint.y - e < p.y and p.y < nosePoint.y + e)
-			{
-				if (nosePoint.x - e*3.5 > p.x)
-				{
-					if (p.x > maiorX)
-					{
-						maiorX = p.x;
-						noseLeftIndex = i;
-					}
-				}
-
-				if (p.x > nosePoint.x + e*3.5)
-				{
-					if (p.x < menorX)
-					{
-						menorX = p.x;
-						noseRightIndex = i;
-					}
-				}
-			}
+			pcl::TexMaterial tm = this->texMesh.tex_materials[0];
+			cout << "\tTex Name: " << tm.tex_name << endl;
+			cout << "\tTex File: "  << tm.tex_file << endl;
+			cout << "\tAmbient Color: "  << tm.tex_Ka.r << " " << tm.tex_Ka.g << " " << tm.tex_Ka.b << endl;
+			cout << "\tDiffuse Color: "  << tm.tex_Kd.r << " " << tm.tex_Kd.g << " " << tm.tex_Kd.b << endl;
+			cout << "\tSpecular Color: "  << tm.tex_Ks.r << " " << tm.tex_Ks.g << " " << tm.tex_Ks.b << endl;
+			cout << "\tTransparency: " << tm.tex_d << endl;
+			cout << "\tShininess: " << tm.tex_Ns << endl;
+			cout << "\tIllumination Model: " << tm.tex_illum << endl;
+			cout << "\t..." << endl;
 		}
-
-		PointType &noseLeftPoint = faceCloud.cloud->at(noseLeftIndex);
-		noseLeftPoint.r = 255;
-		noseLeftPoint.g = 255;
-		noseLeftPoint.b = 0;
-
-		PointType &noseRightPoint = faceCloud.cloud->at(noseRightIndex);
-		noseRightPoint.r = 255;
-		noseRightPoint.g = 255;
-		noseRightPoint.b = 0;
 	}
-	*/
+
+	void removeOutliers() {
+		/* salva landmarks */
+		std::vector<PointType> landmarkPts;
+		std::vector<int> landmarkIndices = getLandmarkIndices();
+		for (int i = 0; i < landmarkIndices.size(); ++i)
+		{
+			PointType p = this->cloud->at(landmarkIndices[i]);
+			landmarkPts.push_back(p);
+		}
+
+		/* retira outliers */
+		pcl::StatisticalOutlierRemoval<PointType> sor;
+		sor.setInputCloud(this->cloud);
+		sor.setMeanK(50);
+		sor.setStddevMulThresh(1.0);
+		sor.filter(*(this->cloud));
+
+		/* reinsere landmarks */
+		for (int i = 0; i < landmarkPts.size(); ++i)
+		{
+			this->cloud->push_back(landmarkPts[i]);
+		}
+
+		// this->eyeLandmarks.leftEye_left		= this->cloud->size() - 8;
+		// this->eyeLandmarks.leftEye_right	= this->cloud->size() - 7;
+		// this->eyeLandmarks.rightEye_left	= this->cloud->size() - 6;
+		// this->eyeLandmarks.rightEye_right	= this->cloud->size() - 5;
+		// this->noseLandmarks.noseTip			= this->cloud->size() - 4;
+		// this->noseLandmarks.nose_left		= this->cloud->size() - 3;
+		// this->noseLandmarks.nose_right		= this->cloud->size() - 2;
+		// this->noseLandmarks.noseBase		= this->cloud->size() - 1;
+		this->landmarks.leftEye_left	= this->cloud->size() - 13;
+		this->landmarks.leftEye_right	= this->cloud->size() - 12;
+		this->landmarks.rightEye_left	= this->cloud->size() - 11;
+		this->landmarks.rightEye_right	= this->cloud->size() - 10;
+
+		this->landmarks.noseTip			= this->cloud->size() - 9;
+		this->landmarks.nose_left		= this->cloud->size() - 8;
+		this->landmarks.nose_right		= this->cloud->size() - 7;
+		this->landmarks.noseBase		= this->cloud->size() - 6;
+
+		this->landmarks.mouth_up		= this->cloud->size() - 5;
+		this->landmarks.mouth_left		= this->cloud->size() - 4;
+		this->landmarks.mouth_right		= this->cloud->size() - 3;
+		this->landmarks.mouth_down		= this->cloud->size() - 2;
+
+		this->landmarks.chin			= this->cloud->size() - 1;
+	}
+
+	void updateTexData(string meanFaceFileName, string texFile) {
+		// copia todas as informações da face média
+		Scan3D meanFace(meanFaceFileName);
+		this->texMesh = meanFace.texMesh;
+
+		/* FAZENDO CALCULOS DE NORMAIS DE TODOS OS PONTOS DA NUVEM */
+
+		pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+
+		pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_xyz (new pcl::PointCloud<pcl::PointXYZ>);
+		pcl::copyPointCloud (*(this->cloud), *cloud_xyz);
+		ne.setInputCloud(cloud_xyz);
+
+		pcl::search::KdTree<pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
+		ne.setSearchMethod (tree);
+
+		pcl::PointCloud<pcl::Normal>::Ptr cloud_normals (new pcl::PointCloud<pcl::Normal>);
+
+		ne.setRadiusSearch (0.03);
+
+		ne.compute (*cloud_normals);
+
+		pcl::PointCloud<pcl::PointNormal>::Ptr cloud_with_normals (new pcl::PointCloud<pcl::PointNormal>);
+		pcl::concatenateFields(*cloud_xyz, *cloud_normals, *cloud_with_normals);
+
+		/* FIM DOS CALCULOS */
+
+		// nuvem de pontos não pode ser a mesma da face média
+		pcl::toPCLPointCloud2(*cloud_with_normals, this->texMesh.cloud);
+
+		// alterar arquivo de textura utilizado (também não será o mesmo da face média)
+		this->texMesh.tex_materials[0].tex_file = texFile;
+	}
 };
 
 #endif

@@ -2,6 +2,9 @@
 #define CloudType_IO
 
 #include <pcl/io/pcd_io.h>
+#include <pcl/io/obj_io.h>
+#include <pcl/io/ply_io.h>
+#include <pcl/TextureMesh.h>
 
 #include <iostream>
 #include <fstream>
@@ -49,6 +52,7 @@ public:
 		CloudType::Ptr cloud(new CloudType);
 		ifstream file(OFFFileName.c_str());
 		string offType;
+
 		int nPoints = 0, nFaces = 0, nEdges = 0;
 
 		// read number of points, faces and edges of the cloud
@@ -68,10 +72,7 @@ public:
 				file >> temp_r >> temp_g >> temp_b >> temp_a;
 			}
 
-			p.r = temp_r;
-			p.g = temp_g;
-			p.b = temp_b;
-			p.a = temp_a;
+			p.r = temp_r; p.g = temp_g; p.b = temp_b; p.a = temp_a;
 
 			cloud->push_back(p);
 		}
@@ -80,7 +81,7 @@ public:
 		return cloud;
 	}
 
-	static void saveCloudToOFF(CloudType::Ptr cloudSource, string fileName = "point_cloud.off") {
+	static void saveCloudToOFF(CloudType::Ptr cloudSource, vector<Face> faces, string fileName = "point_cloud.off") {
 		if (fileName.size())
 		{
 			ofstream file(fileName.c_str());
@@ -88,7 +89,6 @@ public:
 
 			// write header
 			file << "COFF" << endl;
-
 
 			// number of not NaN points
 			for (int i = 0; i < cloudSource->size(); ++i)
@@ -100,7 +100,7 @@ public:
 				}
 			}
 
-			file << numValidPoints << " " << 0 << " " << 0 << endl;
+			file << numValidPoints << " " << faces.size() << " " << 0 << endl;
 
 			// write points
 			for (int i = 0; i < cloudSource->size(); ++i)
@@ -112,6 +112,18 @@ public:
 				}
 			}
 
+			// write faces
+			for (int i = 0; i < faces.size(); ++i)
+			{
+				std::vector<unsigned int> f = faces[i].vertices;
+				file << f.size() << " ";
+				for (int j = 0; j < f.size(); ++j)
+				{
+					file << f[j] << " ";
+				}
+				file << endl;
+			}
+
 			file.close();
 
 			cout << "Saved " << numValidPoints << " data points to " <<  fileName << endl;
@@ -120,11 +132,91 @@ public:
 		}
 	}
 
+	/* IO OBJ */
+
+	static pcl::TextureMesh loadCloudFromOBJ(string fileName) {
+		pcl::TextureMesh texMesh;
+		pcl::io::loadOBJFile(fileName, texMesh);
+		return texMesh;
+	}
+
+	static void saveCloudToOBJ(pcl::TextureMesh texMesh, string fileName = "point_cloud.obj") {
+		pcl::io::saveOBJFile(fileName, texMesh, 6);
+	}
+
+	static void fixFaces(string fileName) {
+		string line;
+		ifstream file(fileName.c_str());
+		ofstream temp("temp.txt");
+		int i = 0;
+
+		if (file.is_open())
+		{
+			while ( getline (file,line) )
+			{
+				Tokenizer tokenizer(line, ' ');
+				std::vector<string> lineSplited = tokenizer.remaining();
+				std::vector<int> lineIndices;
+
+				if (lineSplited[0] == "f")
+				{
+					Tokenizer subTokenizer1(lineSplited[1], '/');
+					string indexStr = subTokenizer1.remaining()[0];
+					int index = atoi(indexStr.c_str());
+					lineIndices.push_back(index);
+
+					Tokenizer subTokenizer2(lineSplited[2], '/');
+					indexStr = subTokenizer2.remaining()[0];
+					index = atoi(indexStr.c_str());
+					lineIndices.push_back(index);
+
+					Tokenizer subTokenizer3(lineSplited[3], '/');
+					indexStr = subTokenizer3.remaining()[0];
+					index = atoi(indexStr.c_str());
+					lineIndices.push_back(index);
+
+					temp << "f";
+					for (int i = 0; i < lineIndices.size(); ++i)
+					{
+						int index = lineIndices[i];
+						temp << " " << index << "/" << index << "/" << index;
+					}
+				} else {
+					temp << line;
+				}
+
+				temp << endl;
+			}
+			file.close();
+			temp.close();
+
+			std::remove(fileName.c_str());
+			std::rename("temp.txt", fileName.c_str());
+		}
+		else cout << "Unable to open file";
+	}
+
+	/* IO PLY */
+
+	static CloudType::Ptr loadCloudFromPLY(string fileName) {
+		CloudType::Ptr result(new CloudType);
+		pcl::io::loadPLYFile (fileName, *result);
+		return result;
+	}
+
+	static void saveCloudToPLY(CloudType::Ptr cloudSource, string fileName = "point_cloud.ply") {
+		std::vector<int> v;
+		CloudType::Ptr cloudSource_copy(new CloudType);
+		pcl::removeNaNFromPointCloud(*cloudSource, *cloudSource_copy, v);
+
+		pcl::io::savePLYFile (fileName, *cloudSource_copy);
+	}
+
 	/* converters */
 
 	static void convertPCDtoOFF(string PCDFileName) {
 		CloudType::Ptr cloud = loadCloudFromPCD(PCDFileName);
-		saveCloudToOFF(cloud, PCDFileName + ".off");
+		saveCloudToOFF(cloud, std::vector<Face>(), PCDFileName + ".off");
 	}
 
 	static void convertOFFtoPCD(string OFFFileName) {
