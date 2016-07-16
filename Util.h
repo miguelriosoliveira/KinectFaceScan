@@ -109,7 +109,7 @@ public:
 		cv::Scalar c;
 
   		//draw points
-		int j = 0;
+		// int j = 0;
 		for(int i = 0; i < n; i++) {
 			if (visi.at<int>(i,0) == 0) continue;
 			p1 = cv::Point(shape.at<double>(i,0), shape.at<double>(i+n,0));

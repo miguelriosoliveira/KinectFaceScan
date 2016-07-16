@@ -220,10 +220,11 @@ void splitScreen(PCLVis& pclVis, string v1Text, string v2Text, string v3Text, st
 
 void pclVisualizerInit(PCLVis& pclVis) {
 	// tamanho da janela
-	pclVis.setSize(1024, 768);
+	pclVis.setSize(1366-640, 480);
 
 	// tela dividida em 4 viewports
 	splitScreen(pclVis, "REAL TIME CLOUD", "BASE CLOUD", "FULL CLOUD", "3D RECONSTRUCTION", "TEXTURIZED FACE");
+	// splitScreen(pclVis, "", "", "FULL CLOUD", "3D RECONSTRUCTION", "TEXTURIZED FACE");
 
 	// texto de help
 	string helpText = "Q - EXIT\nENTER - SET BASE CLOUD\nSPACE - REGISTER CURRENT CLOUD\nZ - SAVE CLOUDS AND CREATE FACE MESH";
@@ -252,7 +253,6 @@ void pclVisualizerInit(PCLVis& pclVis) {
 	// pclVis.removePolygonMesh("whiteMesh", 4);
 	// pclVis.addTextureMesh(mesh.texMesh, "resultMesh", 4);
 // ////////////////////////////////////////////////////////////////////////////////////////////////
-
 }
 
 void pclVisualizerViewer(PCLVis& pclVis) {
